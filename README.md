@@ -3,8 +3,7 @@
 > **个人作品**：在 [程序员鱼皮](https://yuyuanweb.feishu.cn/wiki/Abldw5WkjidySxkKxU2cQdAtnah) 原版教学项目基础上二次开发与功能完善。
 >
 > 原项目为 AI 编程实战教程，本仓库为本人学习后的独立实现与扩展版本。
->
-> 原教程与系列学习：[编程导航](https://www.codefather.cn/vip) · 介绍视频：[B 站](https://bilibili.com/video/BV1g8d8B6ENk)
+
 
 
 
@@ -105,26 +104,6 @@
 - 如何使用 Aceternity UI 打造炫酷的科技感前端界面？
 - 如何开发标准化的 Agent Skills 技能包，并在多种 AI 工具中验证？
 - 如何在 AI 编程中进行人工确认、版本控制和迭代优化？
-
-
-
-### 鱼皮系列项目优势
-
-鱼皮的原创项目以 **实战** 为主，用 **全程直播** 的方式 **从 0 到 1** 带做，从需求分析、技术选型、项目设计、项目初始化、Demo 编写、前后端开发实现、项目优化、部署上线等，每个环节我都 **从理论到实践** 给大家讲的明明白白、每个细节都不放过！
-
-比起看网上的教程学习，鱼皮项目系列的优势：从学知识 => 实践项目 => 复习笔记 => 项目答疑 => 简历写法 => 面试题解的一条龙服务
-
-![](https://pic.yupi.icu/1/%E9%B1%BC%E7%9A%AE%E9%A1%B9%E7%9B%AE%E5%AE%9E%E6%88%98%E7%9A%84%E4%BC%98%E5%8A%BF%E5%A4%A7.jpeg)
-
-编程导航已有 **20+ 套项目教程！** 每个项目的学习重点不同，几乎全都是前端 + 后端的 **全栈项目**，也有大量 AI 应用开发项目。
-
-详细请见：[https://codefather.cn/course](https://www.codefather.cn/course)（在该页面右侧有教程推荐和学习建议）
-
-往期项目介绍视频：[https://bilibili.com/video/BV1YvmbYbEgS](https://www.bilibili.com/video/BV1YvmbYbEgS/)
-
-鱼皮的项目帮很多同学拿到了大厂高薪 Offer：
-
-![](https://pic.yupi.icu/1/%E7%BC%96%E7%A8%8B%E5%AF%BC%E8%88%AA2026%20offer%E6%8A%A5%E5%96%9C.png)
 
 
 
@@ -240,21 +219,3 @@ npm run dev
 ```
 
 生产部署与 Docker 见 **[docs/DEPLOY.md](docs/DEPLOY.md)**。
-
-
-
-## 加入项目学习
-
-编程导航已有 **20+ 套项目教程**！每个项目的学习重点不同，几乎全都是前端 + 后端的 **全栈** 项目，也有大量 AI 应用开发项目。
-
-![](https://pic.yupi.icu/1/%25E9%25A1%25B9%25E7%259B%25AE%25E6%2595%2599%25E7%25A8%258B.png)
-
-欢迎加入 [编程导航](https://www.codefather.cn/vip)，加入后不仅可以全程跟学本项目，往期 **20+ 套原创项目教程** 也都可以无限回看。还能享受更多原创技术资料、学习和求职指导、上百场面试回放视频，开启你的编程起飞之旅~
-
-🧧 助力新项目学习，给大家发放 **限时编程导航优惠券**，扫码即可领券加入。加入三天内不满意可全额退款，欢迎加入体验，名额有限，速来学习！
-
-<img width="404" alt="image" src="https://github.com/user-attachments/assets/56411098-b60e-4267-8ba2-4ebc5d416afc" />
-
-1 天不到 1 块钱，绝对是对自己最值的投资！成为编程导航会员后，可以解锁 20 多套项目的教程和资料，PC 网站和 APP 都可以学习，如图：
-
-![](https://pic.yupi.icu/1/image-20250120113756426-20250422160856746.png)
