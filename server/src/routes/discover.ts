@@ -16,6 +16,7 @@ import {
   savePlatformSnapshot
 } from '../services/discovery/snapshots.js';
 import type {
+  DiscoveryItem,
   DiscoveryMode,
   DiscoverySortMetric,
   DiscoveryTimeWindow
@@ -30,6 +31,10 @@ const router = Router();
 
 const cache = new Map<string, { expires: number; payload: unknown }>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
+
+interface DiscoveryCachePayload {
+  items: DiscoveryItem[];
+}
 
 function cacheKey(parts: Record<string, string | number | undefined>): string {
   return Object.entries(parts)
@@ -161,14 +166,17 @@ router.post('/insight/generate', async (req, res) => {
       return res.status(400).json({ error: 'Invalid period' });
     }
 
-    const mappedItems = Array.isArray(currentItems)
-      ? currentItems.map((row: { title?: string; content?: string; url?: string; source?: string }) => ({
-          title: String(row.title ?? ''),
-          content: String(row.content ?? ''),
-          url: String(row.url ?? '#'),
-          source: (row.source ?? source) as SourceId,
-          metricLabels: { primary: '', primaryValue: 0 }
-        }))
+    const mappedItems: DiscoveryItem[] | undefined = Array.isArray(currentItems)
+      ? currentItems.map((row) => {
+          const r = row as Partial<DiscoveryItem>;
+          return {
+            title: String(r.title ?? ''),
+            content: String(r.content ?? ''),
+            url: String(r.url ?? '#'),
+            source: (r.source ?? source) as SourceId,
+            metricLabels: r.metricLabels ?? { primary: '', primaryValue: 0 }
+          };
+        })
       : undefined;
 
     const insight = await generateDiscoveryInsight({
@@ -242,14 +250,13 @@ router.post('/', async (req, res) => {
     }
 
     const key = cacheKey({ source, mode, timeWindow: tw, sortBy, query, limit });
-    const cached = getCached<typeof res.body>(key);
+    const cached = getCached<DiscoveryCachePayload>(key);
 
-    let items;
+    let items: DiscoveryItem[];
     let cacheHit = false;
 
-    if (cached && typeof cached === 'object' && cached !== null && 'items' in cached) {
-      const c = cached as { items: unknown[] };
-      items = c.items;
+    if (cached?.items) {
+      items = cached.items;
       cacheHit = true;
     } else {
       items = await adapter.discover({

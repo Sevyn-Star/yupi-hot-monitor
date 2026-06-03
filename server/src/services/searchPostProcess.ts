@@ -80,7 +80,7 @@ export function mapSortByForDiscovery(sortBy: string): DiscoverySortMetric {
   if (sortBy === 'stars') return 'stars';
   if (sortBy === 'views') return 'views';
   if (sortBy === 'comments') return 'comments';
-  if (sortBy === 'likes') return 'forks';
+  if (sortBy === 'likes') return 'likes';
   if (sortBy === 'publishedAt') return 'updated';
   return 'hot';
 }

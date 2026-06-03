@@ -8,7 +8,8 @@ export type DiscoverySortMetric =
   | 'forks'
   | 'updated'
   | 'views'
-  | 'comments';
+  | 'comments'
+  | 'likes';
 
 export interface DiscoveryMetricLabels {
   primary: string;
@@ -28,6 +29,7 @@ export interface DiscoveryItem {
   likeCount?: number;
   score?: number;
   commentCount?: number;
+  danmakuCount?: number;
   metricLabels: DiscoveryMetricLabels;
   author?: {
     name: string;
