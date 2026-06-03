@@ -11,13 +11,14 @@ datasource db {
 }
 
 model Keyword {
-  id        String    @id @default(uuid())
-  text      String    @unique
-  category  String?
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  hotspots  Hotspot[]
+  id            String    @id @default(uuid())
+  text          String    @unique
+  category      String?
+  isActive      Boolean   @default(true)
+  lastScannedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  hotspots      Hotspot[]
 }
 
 model Hotspot {
@@ -67,4 +68,31 @@ model Setting {
   id    String @id @default(uuid())
   key   String @unique
   value String
+}
+
+/// 平台发现榜单快照，用于历史对比与趋势曲线
+model PlatformSnapshot {
+  id         String   @id @default(uuid())
+  source     String
+  timeWindow String   // today | 7d | 30d
+  sortBy     String
+  mode       String   @default("trending")
+  payload    String   // JSON: DiscoveryItem[]
+  itemCount  Int
+  fetchedAt  DateTime @default(now())
+
+  @@index([source, timeWindow, sortBy, fetchedAt])
+}
+
+/// AI 热点洞察（主题、关键词、总结）
+model DiscoveryInsight {
+  id          String   @id @default(uuid())
+  source      String
+  period      String   // today | 7d | 30d
+  sortBy      String   @default("hot")
+  payload     String   // JSON: DiscoveryInsightPayload
+  snapshotIds String?  // JSON array of snapshot ids used
+  generatedAt DateTime @default(now())
+
+  @@index([source, period, sortBy, generatedAt])
 }

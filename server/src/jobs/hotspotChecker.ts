@@ -1,176 +1,136 @@
 import { Server } from 'socket.io';
 import { prisma } from '../db.js';
-import { searchTwitter } from '../services/twitter.js';
-import { searchBing, searchHackerNews, deduplicateResults } from '../services/search.js';
-import { searchSogou, searchBilibili, searchWeibo, detectAndFetchAccount } from '../services/chinaSearch.js';
+import { searchAllSources } from '../services/aggregateSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
-import type { SearchResult } from '../types.js';
+import { sendHotspotWebhook } from '../services/webhook.js';
+import { getAppSettings } from '../services/settings.js';
+import { resetAiStatsForScan, getCurrentScanAiStats } from '../services/aiStats.js';
+import {
+  setCurrentKeyword,
+  setLastSourceStats,
+  setPendingRunDetails,
+  emptyFilterStats,
+  type ScanFilterStats,
+  type KeywordScanSummary
+} from '../services/scanStatus.js';
+import { log } from '../utils/logger.js';
+import {
+  filterByFreshness,
+  prioritizeResults,
+  shouldSkipByRelevanceRules,
+  MAX_AGE_HOURS
+} from './hotspotFilters.js';
 
-// 新鲜度过滤：丢弃超过指定小时数的内容
-// Twitter 层面已通过 since: 限制了时间范围，这里只做兜底
-const MAX_AGE_HOURS = 7 * 24; // 7天
+const TWITTER_QUOTA = 15;
+const OTHER_QUOTA = 10;
 
-function filterByFreshness(results: SearchResult[]): SearchResult[] {
-  const cutoff = new Date(Date.now() - MAX_AGE_HOURS * 3600 * 1000);
-  return results.filter(item => {
-    // 没有发布时间的，暂时保留（搜索引擎结果通常没有时间）
-    if (!item.publishedAt) return true;
-    return item.publishedAt >= cutoff;
+function mergeFilterStats(target: ScanFilterStats, add: ScanFilterStats): void {
+  (Object.keys(target) as (keyof ScanFilterStats)[]).forEach((k) => {
+    target[k] += add[k];
   });
 }
 
-// 按来源优先级排序：Twitter > 微博 > B站/账号内容 > 搜索引擎
-function prioritizeResults(results: SearchResult[]): SearchResult[] {
-  const priorityMap: Record<string, number> = {
-    twitter: 1,
-    weibo: 2,
-    bilibili: 3,
-    hackernews: 4,
-    sogou: 5,
-    bing: 6,
-    google: 7,
-    duckduckgo: 8
-  };
-  return [...results].sort((a, b) => {
-    return (priorityMap[a.source] || 99) - (priorityMap[b.source] || 99);
-  });
-}
+export async function runHotspotCheck(io: Server): Promise<{
+  newHotspotsCount: number;
+  keywordsChecked: number;
+}> {
+  resetAiStatsForScan();
+  const totalFilterStats = emptyFilterStats();
+  const keywordSummaries: KeywordScanSummary[] = [];
 
-export async function runHotspotCheck(io: Server): Promise<void> {
-  console.log('🔍 Starting hotspot check...');
+  log.info('hotspot.check.start');
 
-  // 获取所有激活的关键词
+  const appSettings = await getAppSettings();
+
   const keywords = await prisma.keyword.findMany({
     where: { isActive: true }
   });
 
   if (keywords.length === 0) {
-    console.log('No active keywords to monitor');
-    return;
+    log.info('hotspot.check.no_keywords');
+    setPendingRunDetails({
+      filterStats: totalFilterStats,
+      keywordSummaries: [],
+      aiCalls: getCurrentScanAiStats()
+    });
+    return { newHotspotsCount: 0, keywordsChecked: 0 };
   }
-
-  console.log(`Checking ${keywords.length} keywords...`);
 
   let newHotspotsCount = 0;
 
   for (const keyword of keywords) {
-    console.log(`\n📎 Checking keyword: "${keyword.text}"`);
+    const keywordStart = Date.now();
+    const kwStats = emptyFilterStats();
+    let keywordNew = 0;
+    let sourceStats: KeywordScanSummary['sourceStats'] = [];
+    let keywordError: string | undefined;
+
+    setCurrentKeyword(keyword.text);
+    log.info('hotspot.keyword.start', { keyword: keyword.text });
 
     try {
-      // 第一步：检测关键词是否为某个平台账号
-      console.log(`  🎯 Detecting account for "${keyword.text}"...`);
-      const accountResult = await detectAndFetchAccount(keyword.text);
-      
-      if (accountResult.accounts.length > 0) {
-        for (const acc of accountResult.accounts) {
-          console.log(`  ✅ Found ${acc.platform} account: ${acc.name} (${acc.followers} followers)`);
-        }
-      }
-
-      // 第 1.5 步：Query Expansion（查询扩展）
-      console.log(`  🔍 Expanding keyword "${keyword.text}"...`);
       const expandedKeywords = await expandKeyword(keyword.text);
-      console.log(`  📋 Expanded to ${expandedKeywords.length} variants: ${expandedKeywords.slice(0, 5).join(', ')}${expandedKeywords.length > 5 ? '...' : ''}`);
 
-      // 第二步：从多个来源获取数据（国际 + 国内并行请求）
-      const [
-        twitterResults,
-        bingResults,
-        hackernewsResults,
-        sogouResults,
-        bilibiliResults,
-        weiboResults
-      ] = await Promise.allSettled([
-        searchTwitter(keyword.text),
-        searchBing(keyword.text),
-        searchHackerNews(keyword.text),
-        searchSogou(keyword.text),
-        searchBilibili(keyword.text),
-        searchWeibo(keyword.text)
-      ]);
+      const searchResult = await searchAllSources(
+        keyword.text,
+        appSettings.enabledSources,
+        { includeAccountDetection: true }
+      );
+      sourceStats = searchResult.sourceStats;
+      setLastSourceStats(sourceStats);
 
-      const allResults: SearchResult[] = [];
-      
-      // 优先添加账号检测到的最新内容
-      if (accountResult.results.length > 0) {
-        allResults.push(...accountResult.results);
-        console.log(`  AccountFetch: ${accountResult.results.length} results`);
-      }
+      kwStats.rawFetched = searchResult.results.length;
+      totalFilterStats.rawFetched += searchResult.results.length;
 
-      const sources = [
-        { name: 'Twitter', result: twitterResults },
-        { name: 'Bing', result: bingResults },
-        { name: 'HackerNews', result: hackernewsResults },
-        { name: 'Sogou', result: sogouResults },
-        { name: 'Bilibili', result: bilibiliResults },
-        { name: 'Weibo', result: weiboResults }
-      ];
+      const freshResults = prioritizeResults(filterByFreshness(searchResult.results));
+      kwStats.afterFreshness = freshResults.length;
+      totalFilterStats.afterFreshness += freshResults.length;
 
-      for (const source of sources) {
-        if (source.result.status === 'fulfilled') {
-          allResults.push(...source.result.value);
-          console.log(`  ${source.name}: ${source.result.value.length} results`);
-        } else {
-          console.log(`  ${source.name}: failed - ${source.result.reason}`);
-        }
-      }
-
-      // 去重 → 新鲜度过滤 → 按来源优先级排序
-      const uniqueResults = deduplicateResults(allResults);
-      const freshResults = filterByFreshness(uniqueResults);
-      const sortedResults = prioritizeResults(freshResults);
-      console.log(`  Total: ${allResults.length} raw → ${uniqueResults.length} unique → ${freshResults.length} fresh (within ${MAX_AGE_HOURS}h)`);
-
-      // 处理结果：Twitter 优先多给配额
-      // Twitter 最多处理 15 条，其他来源共享 10 条配额
       let twitterProcessed = 0;
       let otherProcessed = 0;
-      const TWITTER_QUOTA = 15;
-      const OTHER_QUOTA = 10;
 
-      for (const item of sortedResults) {
-        // 检查配额
-        if (item.source === 'twitter' && twitterProcessed >= TWITTER_QUOTA) continue;
-        if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) continue;
-        if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) break;
+      for (const item of freshResults) {
+        if (item.source === 'twitter' && twitterProcessed >= TWITTER_QUOTA) {
+          kwStats.skippedQuota++;
+          continue;
+        }
+        if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) {
+          kwStats.skippedQuota++;
+          continue;
+        }
+        if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) {
+          kwStats.skippedQuota++;
+          break;
+        }
+
         try {
-          // 检查是否已存在
           const existing = await prisma.hotspot.findFirst({
-            where: {
-              url: item.url,
-              source: item.source
-            }
+            where: { url: item.url, source: item.source }
           });
-
           if (existing) {
+            kwStats.skippedDuplicate++;
             continue;
           }
 
-          // AI 分析（传入关键词和预匹配结果）
           const fullText = item.title + '\n' + item.content;
           const preMatch = preMatchKeyword(fullText, expandedKeywords);
           const analysis = await analyzeContent(fullText, keyword.text, preMatch);
 
-          // 只保存真实且相关的热点
-          if (!analysis.isReal) {
-            console.log(`  ❌ Filtered fake/spam: ${item.title.slice(0, 30)}...`);
+          const skipReason = shouldSkipByRelevanceRules(analysis);
+          if (skipReason === 'fake') {
+            kwStats.skippedFake++;
+            continue;
+          }
+          if (skipReason === 'low_relevance') {
+            kwStats.skippedLowRelevance++;
+            continue;
+          }
+          if (skipReason === 'not_mentioned') {
+            kwStats.skippedNotMentioned++;
             continue;
           }
 
-          // 相关性阈值：50 分以下过滤
-          if (analysis.relevance < 50) {
-            console.log(`  ⏭ Low relevance (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
-            continue;
-          }
-
-          // 额外规则：关键词未被提及且相关性不足 65 → 过滤
-          if (!analysis.keywordMentioned && analysis.relevance < 65) {
-            console.log(`  ⏭ Keyword not mentioned & relevance < 65 (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
-            continue;
-          }
-
-          // 保存热点
           const hotspot = await prisma.hotspot.create({
             data: {
               title: item.title,
@@ -199,17 +159,15 @@ export async function runHotspotCheck(io: Server): Promise<void> {
               publishedAt: item.publishedAt || null,
               keywordId: keyword.id
             },
-            include: {
-              keyword: true
-            }
+            include: { keyword: true }
           });
 
+          kwStats.saved++;
+          keywordNew++;
           newHotspotsCount++;
           if (item.source === 'twitter') twitterProcessed++;
           else otherProcessed++;
-          console.log(`  ✅ New hotspot [${item.source}]: ${hotspot.title.slice(0, 40)}... (${analysis.importance})`);
 
-          // 创建通知
           await prisma.notification.create({
             data: {
               type: 'hotspot',
@@ -219,7 +177,6 @@ export async function runHotspotCheck(io: Server): Promise<void> {
             }
           });
 
-          // WebSocket 通知
           io.to(`keyword:${keyword.text}`).emit('hotspot:new', hotspot);
           io.emit('notification', {
             type: 'hotspot',
@@ -229,23 +186,85 @@ export async function runHotspotCheck(io: Server): Promise<void> {
             importance: hotspot.importance
           });
 
-          // 邮件通知（仅对高重要级别）
           if (['high', 'urgent'].includes(analysis.importance)) {
-            await sendHotspotEmail(hotspot);
+            if (appSettings.emailNotificationsEnabled) {
+              await sendHotspotEmail(hotspot);
+            }
+            if (appSettings.webhookNotificationsEnabled) {
+              await sendHotspotWebhook({
+                title: hotspot.title,
+                url: hotspot.url,
+                source: hotspot.source,
+                importance: hotspot.importance,
+                summary: hotspot.summary,
+                keyword: { text: keyword.text }
+              });
+            }
           }
-
         } catch (error) {
-          console.error(`  Error processing result:`, error);
+          kwStats.processErrors++;
+          log.error('hotspot.item.error', {
+            keyword: keyword.text,
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
       }
 
-      // 避免过快请求
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      mergeFilterStats(totalFilterStats, kwStats);
 
+      log.info('hotspot.keyword.done', {
+        keyword: keyword.text,
+        raw: kwStats.rawFetched,
+        fresh: kwStats.afterFreshness,
+        saved: kwStats.saved,
+        filtered: {
+          duplicate: kwStats.skippedDuplicate,
+          fake: kwStats.skippedFake,
+          lowRelevance: kwStats.skippedLowRelevance,
+          notMentioned: kwStats.skippedNotMentioned,
+          quota: kwStats.skippedQuota
+        },
+        sourceStats
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     } catch (error) {
-      console.error(`Error checking keyword "${keyword.text}":`, error);
+      keywordError = error instanceof Error ? error.message : String(error);
+      log.error('hotspot.keyword.failed', { keyword: keyword.text, error: keywordError });
     }
+
+    keywordSummaries.push({
+      keyword: keyword.text,
+      rawCount: kwStats.rawFetched,
+      freshCount: kwStats.afterFreshness,
+      newHotspots: keywordNew,
+      filterStats: { ...kwStats },
+      sourceStats,
+      durationMs: Date.now() - keywordStart,
+      error: keywordError
+    });
+
+    await prisma.keyword.update({
+      where: { id: keyword.id },
+      data: { lastScannedAt: new Date() }
+    });
   }
 
-  console.log(`\n✨ Hotspot check completed. Found ${newHotspotsCount} new hotspots.`);
+  setCurrentKeyword(null);
+
+  const aiCalls = getCurrentScanAiStats();
+  setPendingRunDetails({
+    filterStats: totalFilterStats,
+    keywordSummaries,
+    aiCalls
+  });
+
+  log.info('hotspot.check.complete', {
+    newHotspotsCount,
+    keywordsChecked: keywords.length,
+    filterStats: totalFilterStats,
+    aiCalls
+  });
+
+  return { newHotspotsCount, keywordsChecked: keywords.length };
 }

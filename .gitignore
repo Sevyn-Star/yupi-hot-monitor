@@ -3,5 +3,7 @@ dist/
 .env
 *.db
 *.db-journal
+server/prisma/test.db
+server/prisma/test.db-journal
 .DS_Store
 .idea/

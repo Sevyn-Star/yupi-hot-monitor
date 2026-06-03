@@ -1,87 +1,99 @@
 import { Router } from 'express';
-import { prisma } from '../db.js';
+import {
+  getAppSettings,
+  updateAppSettings,
+  getSettingsForClient,
+  type AppSettings,
+  type SourceId,
+  type WebhookType,
+  SOURCE_IDS
+} from '../services/settings.js';
+import { rescheduleHotspotCron } from '../cron.js';
+import { testWebhook } from '../services/webhook.js';
 
 const router = Router();
 
-// 获取所有设置
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   try {
-    const settings = await prisma.setting.findMany();
-    const settingsMap = settings.reduce((acc: Record<string, string>, item: { key: string; value: string }) => {
-      acc[item.key] = item.value;
-      return acc;
-    }, {} as Record<string, string>);
-
-    res.json(settingsMap);
+    const settings = await getAppSettings();
+    res.json(getSettingsForClient(settings));
   } catch (error) {
     console.error('Error fetching settings:', error);
     res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
 
-// 更新设置
 router.put('/', async (req, res) => {
   try {
-    const settings = req.body;
+    const body = req.body;
 
-    if (typeof settings !== 'object') {
+    if (typeof body !== 'object' || body === null) {
       return res.status(400).json({ error: 'Invalid settings format' });
     }
 
-    const updates = Object.entries(settings).map(([key, value]) => 
-      prisma.setting.upsert({
-        where: { key },
-        update: { value: String(value) },
-        create: { key, value: String(value) }
-      })
-    );
+    const partial: Partial<AppSettings> = {};
 
-    await Promise.all(updates);
+    if (body.scanIntervalMinutes !== undefined) {
+      partial.scanIntervalMinutes = Number(body.scanIntervalMinutes);
+    }
+    if (body.emailNotificationsEnabled !== undefined) {
+      partial.emailNotificationsEnabled = Boolean(body.emailNotificationsEnabled);
+    }
+    if (body.enabledSources !== undefined) {
+      if (!Array.isArray(body.enabledSources)) {
+        return res.status(400).json({ error: 'enabledSources must be an array' });
+      }
+      partial.enabledSources = body.enabledSources.filter((s: string) =>
+        SOURCE_IDS.includes(s as SourceId)
+      ) as SourceId[];
+    }
+    if (body.webhookNotificationsEnabled !== undefined) {
+      partial.webhookNotificationsEnabled = Boolean(body.webhookNotificationsEnabled);
+    }
+    if (body.webhookUrl !== undefined) {
+      partial.webhookUrl = String(body.webhookUrl);
+    }
+    if (body.webhookType !== undefined) {
+      const t = body.webhookType as WebhookType;
+      if (t === 'dingtalk' || t === 'feishu' || t === 'generic') {
+        partial.webhookType = t;
+      }
+    }
+    if (body.dailyReportEmailEnabled !== undefined) {
+      partial.dailyReportEmailEnabled = Boolean(body.dailyReportEmailEnabled);
+    }
 
-    res.json({ message: 'Settings updated' });
+    const settings = await updateAppSettings(partial);
+
+    if (partial.scanIntervalMinutes !== undefined) {
+      await rescheduleHotspotCron();
+    }
+
+    res.json(getSettingsForClient(settings));
   } catch (error) {
     console.error('Error updating settings:', error);
     res.status(500).json({ error: 'Failed to update settings' });
   }
 });
 
-// 获取单个设置
-router.get('/:key', async (req, res) => {
+router.post('/webhook/test', async (req, res) => {
   try {
-    const setting = await prisma.setting.findUnique({
-      where: { key: req.params.key }
-    });
-
-    if (!setting) {
-      return res.status(404).json({ error: 'Setting not found' });
+    const { url, type } = req.body as { url?: string; type?: WebhookType };
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Webhook URL is required' });
     }
-
-    res.json({ key: setting.key, value: setting.value });
-  } catch (error) {
-    console.error('Error fetching setting:', error);
-    res.status(500).json({ error: 'Failed to fetch setting' });
-  }
-});
-
-// 更新单个设置
-router.put('/:key', async (req, res) => {
-  try {
-    const { value } = req.body;
-
-    if (value === undefined) {
-      return res.status(400).json({ error: 'Value is required' });
+    const webhookType: WebhookType =
+      type === 'feishu' || type === 'generic' || type === 'dingtalk'
+        ? type
+        : 'dingtalk';
+    const result = await testWebhook(url.trim(), webhookType);
+    if (!result.ok) {
+      return res.status(502).json({ error: result.error || 'Webhook test failed' });
     }
-
-    const setting = await prisma.setting.upsert({
-      where: { key: req.params.key },
-      update: { value: String(value) },
-      create: { key: req.params.key, value: String(value) }
-    });
-
-    res.json(setting);
+    res.json({ ok: true });
   } catch (error) {
-    console.error('Error updating setting:', error);
-    res.status(500).json({ error: 'Failed to update setting' });
+    console.error('Webhook test error:', error);
+    res.status(500).json({ error: 'Webhook test failed' });
   }
 });
 

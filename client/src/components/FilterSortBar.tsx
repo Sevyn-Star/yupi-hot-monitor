@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Keyword } from '../services/api';
+import { SOURCE_FILTER_OPTIONS } from '../constants/sources';
 
 export interface FilterState {
   source: string;
@@ -41,17 +42,7 @@ const SORT_OPTIONS = [
   { value: 'hot', label: '热度综合', icon: TrendingUp },
 ];
 
-const SOURCE_OPTIONS = [
-  { value: '', label: '全部来源' },
-  { value: 'twitter', label: 'Twitter' },
-  { value: 'bing', label: 'Bing' },
-  { value: 'google', label: 'Google' },
-  { value: 'sogou', label: '搜狗' },
-  { value: 'bilibili', label: 'Bilibili' },
-  { value: 'weibo', label: '微博热搜' },
-  { value: 'hackernews', label: 'HackerNews' },
-  { value: 'duckduckgo', label: 'DuckDuckGo' },
-];
+const SOURCE_OPTIONS = SOURCE_FILTER_OPTIONS;
 
 const IMPORTANCE_OPTIONS = [
   { value: '', label: '全部等级' },

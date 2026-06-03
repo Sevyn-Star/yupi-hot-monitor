@@ -1,9 +1,13 @@
 import { OpenRouter } from '@openrouter/sdk';
 import type { AIAnalysis } from '../types.js';
+import { recordAnalyzeCall, recordExpandCall } from './aiStats.js';
 
 const openRouter = new OpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY ?? ''
 });
+
+/** OpenRouter 免费模型 */
+const OPENROUTER_MODEL = 'z-ai/glm-4.5-air:free';
 
 // ========== Query Expansion（查询扩展） ==========
 
@@ -31,7 +35,7 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 
   try {
     const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
+      model: OPENROUTER_MODEL,
       messages: [
         {
           role: 'system',
@@ -62,9 +66,9 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
     const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       const parsed: string[] = JSON.parse(jsonMatch[0]);
-      // 确保原始关键词和核心词都在列表中
       const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
       expansionCache.set(keyword, expanded);
+      recordExpandCall();
       console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
       return expanded;
     }
@@ -168,7 +172,7 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     const prompt = buildAnalysisPrompt(keyword, matchResult);
 
     const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
+      model: OPENROUTER_MODEL,
       messages: [
         {
           role: 'system',
@@ -190,6 +194,7 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      recordAnalyzeCall();
       return {
         isReal: Boolean(parsed.isReal),
         relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),

@@ -11,8 +11,9 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:push": "prisma db push",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -37,7 +38,9 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.2.0",
     "@types/nodemailer": "^7.0.9",
+    "@types/supertest": "^6.0.3",
     "@types/uuid": "^10.0.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

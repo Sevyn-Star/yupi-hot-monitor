@@ -1,0 +1,19 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./server/.env
+    environment:
+      - DATABASE_URL=file:/app/data/prod.db
+      - PORT=3001
+      - CLIENT_URL=http://localhost:5173
+    volumes:
+      - hotmonitor-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  hotmonitor-data:

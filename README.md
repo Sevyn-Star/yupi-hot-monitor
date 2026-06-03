@@ -68,6 +68,21 @@
 
 ![](https://pic.yupi.icu/1/1772099941189-4fb78679-12ac-4b92-a7b4-b5b4645b09d4.png)
 
+### 实现状态说明（与代码一致）
+
+> 详细对照表见 **[docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)**。以下为当前 Web 版要点，避免宣传与实现不符。
+
+| 能力 | 实现情况 | 说明 |
+|------|----------|------|
+| 1）关键词监控 | ✅ 已完成 | 增删、激活/暂停、「监控词」Tab |
+| 2）多源抓取 + AI | ✅ 已完成 | **10 源**（含 Google / GitHub / Hugging Face / DuckDuckGo），设置页可开关 |
+| 3）筛选排序 | ✅ 已完成 | 来源、重要性、时间、真假、热度等 |
+| 4）全网搜索 | ✅ 已完成 | 与监控同源；支持**一键入库** |
+| 5）实时通知 | ✅ 已完成 | WebSocket + 站内 + 邮件/Webhook + 可选每日日报 |
+| 6）Agent Skills | ✅ 已完成 | `skills/hot-monitor/`，见 [SKILLS_VS_WEB.md](docs/SKILLS_VS_WEB.md) |
+
+**其它说明：** 单用户本地工具；扫描间隔在设置页配置；变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 
 
 ## 二、项目优势
@@ -115,6 +130,24 @@
 
 ## 三、更多介绍
 
+📄 **[功能与实现说明（docs/PROJECT_OVERVIEW.md）](docs/PROJECT_OVERVIEW.md)** — 完整架构、六大功能实现细节与代码索引
+
+📊 **[功能矩阵（docs/FEATURE_MATRIX.md）](docs/FEATURE_MATRIX.md)** — 功能 × 后端 × 前端 × 测试对照与已知限制
+
+📋 **[项目完善规划（docs/项目完善规划.md）](docs/项目完善规划.md)** — 现状评估、分阶段完善路线与验收清单
+
+📂 **[前端目录说明（client/FRONTEND.md）](client/FRONTEND.md)** — pages / components / hooks 结构与路由
+
+🚢 **[部署指南（docs/DEPLOY.md）](docs/DEPLOY.md)** — 一键 dev、Docker、Nginx 生产配置
+
+🔗 **[Web 版 vs Skills（docs/SKILLS_VS_WEB.md）](docs/SKILLS_VS_WEB.md)** — 数据源、报告与使用场景对比
+
+📸 **[截图目录（docs/screenshots/）](docs/screenshots/)** — 本地截图存放说明
+
+📜 **[CHANGELOG.md](CHANGELOG.md)** — 版本变更记录
+
+📖 **[使用说明（docs/使用说明.md）](docs/使用说明.md)** — 安装、配置与各页面操作全流程
+
 功能模块：
 
 ![](https://pic.yupi.icu/1/image-20260304101313199.png)
@@ -128,6 +161,19 @@
 ## 四、快速运行
 
 > 详细的保姆级教程请参考 [本地运行指南](docs/LOCAL_SETUP.md)
+
+### Quick Start（3 分钟演示）
+
+```bash
+git clone https://github.com/liyupi/yupi-hot-monitor.git
+cd yupi-hot-monitor
+npm run install:all
+cp server/.env.example server/.env   # 填入 OPENROUTER_API_KEY
+npm run demo                          # 迁移数据库 + 演示数据
+npm run dev                           # 前端 :5173  后端 :3001
+```
+
+浏览器打开 http://localhost:5173 → 热点雷达可见示例数据；**监控词** 页可改词；**设置** 页可开关数据源。
 
 ### 前置条件
 
@@ -184,6 +230,16 @@ cd client && npm run dev
 | 数据库管理 | `cd server && npx prisma studio`（可选） |
 
 更多细节请查看 [保姆级本地运行指南](docs/LOCAL_SETUP.md)。
+
+### 一键启动（根目录）
+
+```bash
+npm install && npm run install:all
+cd server && cp .env.example .env && npx prisma generate && npx prisma db push && cd ..
+npm run dev
+```
+
+生产部署与 Docker 见 **[docs/DEPLOY.md](docs/DEPLOY.md)**。
 
 
 

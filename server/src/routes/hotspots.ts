@@ -1,8 +1,19 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { sortHotspots } from '../utils/sortHotspots.js';
+import { getAppSettings, type SourceId } from '../services/settings.js';
+import { searchAllSources } from '../services/aggregateSearch.js';
+import { analyzeContent } from '../services/ai.js';
+import {
+  generateHotspotReportMarkdown,
+  type ReportRange
+} from '../services/report.js';
+import { getHotspotTrends } from '../services/trends.js';
+import { persistHotspot, resolveKeywordId } from '../services/persistHotspot.js';
 
 const router = Router();
+
+const REPORT_RANGES = new Set<ReportRange>(['today', '7d', '30d']);
 
 // 获取所有热点
 router.get('/', async (req, res) => {
@@ -122,6 +133,18 @@ router.get('/', async (req, res) => {
   }
 });
 
+// 近 N 天热点趋势
+router.get('/trends', async (req, res) => {
+  try {
+    const days = parseInt((req.query.days as string) || '7', 10);
+    const trends = await getHotspotTrends(days);
+    res.json(trends);
+  } catch (error) {
+    console.error('Error fetching trends:', error);
+    res.status(500).json({ error: 'Failed to fetch trends' });
+  }
+});
+
 // 获取热点统计
 router.get('/stats', async (req, res) => {
   try {
@@ -162,6 +185,30 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// Markdown 热点报告（今日 / 7 天 / 30 天）
+router.get('/report', async (req, res) => {
+  try {
+    const raw = (req.query.range as string) || '7d';
+    const range = REPORT_RANGES.has(raw as ReportRange)
+      ? (raw as ReportRange)
+      : '7d';
+    const result = await generateHotspotReportMarkdown(range);
+    const accept = req.headers.accept || '';
+    if (accept.includes('text/markdown')) {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="hotpulse-report-${range}.md"`
+      );
+      return res.send(result.markdown);
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Error generating report:', error);
+    res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
+
 // 获取单个热点
 router.get('/:id', async (req, res) => {
   try {
@@ -183,55 +230,164 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// 手动搜索热点
+// 将搜索结果或手动条目保存入库
+router.post('/save', async (req, res) => {
+  try {
+    const { items, keywordId, keywordText } = req.body as {
+      items?: unknown[];
+      keywordId?: string;
+      keywordText?: string;
+    };
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const resolvedKeywordId = await resolveKeywordId(keywordId, keywordText);
+    let created = 0;
+    let updated = 0;
+    const saved: unknown[] = [];
+
+    for (const raw of items.slice(0, 20)) {
+      const item = raw as Record<string, unknown>;
+      if (!item.title || !item.url || !item.source) continue;
+
+      const { hotspot, created: isNew } = await persistHotspot(
+        {
+          title: String(item.title),
+          content: String(item.content || item.title),
+          url: String(item.url),
+          source: String(item.source),
+          sourceId: item.sourceId != null ? String(item.sourceId) : null,
+          isReal: item.isReal !== false,
+          relevance: Number(item.relevance) || 50,
+          relevanceReason:
+            item.relevanceReason != null ? String(item.relevanceReason) : null,
+          keywordMentioned:
+            item.keywordMentioned != null ? Boolean(item.keywordMentioned) : null,
+          importance: String(item.importance || 'medium'),
+          summary: item.summary != null ? String(item.summary) : null,
+          viewCount: item.viewCount != null ? Number(item.viewCount) : null,
+          likeCount: item.likeCount != null ? Number(item.likeCount) : null,
+          retweetCount: item.retweetCount != null ? Number(item.retweetCount) : null,
+          replyCount: item.replyCount != null ? Number(item.replyCount) : null,
+          commentCount: item.commentCount != null ? Number(item.commentCount) : null,
+          quoteCount: item.quoteCount != null ? Number(item.quoteCount) : null,
+          danmakuCount: item.danmakuCount != null ? Number(item.danmakuCount) : null,
+          authorName: item.authorName != null ? String(item.authorName) : null,
+          authorUsername:
+            item.authorUsername != null ? String(item.authorUsername) : null,
+          authorAvatar: item.authorAvatar != null ? String(item.authorAvatar) : null,
+          authorFollowers:
+            item.authorFollowers != null ? Number(item.authorFollowers) : null,
+          authorVerified:
+            item.authorVerified != null ? Boolean(item.authorVerified) : null,
+          publishedAt:
+            item.publishedAt != null ? String(item.publishedAt) : null
+        },
+        resolvedKeywordId,
+        { createNotification: true }
+      );
+
+      if (isNew) created++;
+      else updated++;
+      saved.push(hotspot);
+    }
+
+    res.status(201).json({ created, updated, saved });
+  } catch (error) {
+    console.error('Error saving hotspots:', error);
+    res.status(500).json({ error: 'Failed to save hotspots' });
+  }
+});
+
+// 手动搜索热点（与定时监控共用多源聚合）
 router.post('/search', async (req, res) => {
   try {
-    const { query, sources = ['twitter', 'bing'] } = req.body;
+    const {
+      query,
+      sources: sourcesOverride,
+      timeWindow,
+      sortBy
+    } = req.body;
 
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
     }
 
-    // 导入搜索服务
-    const { searchTwitter } = await import('../services/twitter.js');
-    const { searchBing } = await import('../services/search.js');
-    const { analyzeContent } = await import('../services/ai.js');
+    const validTimeWindows = ['today', '7d', '30d'] as const;
+    const searchTimeWindow =
+      typeof timeWindow === 'string' &&
+      validTimeWindows.includes(timeWindow as (typeof validTimeWindows)[number])
+        ? (timeWindow as (typeof validTimeWindows)[number])
+        : undefined;
 
-    const results: any[] = [];
+    const searchSortBy = typeof sortBy === 'string' && sortBy ? sortBy : undefined;
 
-    // Twitter 搜索
-    if (sources.includes('twitter')) {
-      try {
-        const tweets = await searchTwitter(query);
-        results.push(...tweets);
-      } catch (error) {
-        console.error('Twitter search failed:', error);
+    const appSettings = await getAppSettings();
+    let enabledSources = appSettings.enabledSources;
+    if (Array.isArray(sourcesOverride) && sourcesOverride.length > 0) {
+      enabledSources = sourcesOverride.filter((s: string) =>
+        appSettings.enabledSources.includes(s as SourceId)
+      ) as SourceId[];
+      if (enabledSources.length === 0) {
+        enabledSources = appSettings.enabledSources;
       }
     }
 
-    // Bing 搜索
-    if (sources.includes('bing')) {
-      try {
-        const webResults = await searchBing(query);
-        results.push(...webResults);
-      } catch (error) {
-        console.error('Bing search failed:', error);
-      }
-    }
+    const { results, sourceStats } = await searchAllSources(query, enabledSources, {
+      includeAccountDetection: enabledSources.length !== 1,
+      timeWindow: searchTimeWindow,
+      sortBy: searchSortBy
+    });
 
-    // AI 分析前几个结果
     const analyzedResults = await Promise.all(
-      results.slice(0, 10).map(async (item) => {
+      results.slice(0, 15).map(async (item) => {
         try {
-          const analysis = await analyzeContent(item.title + ' ' + item.content, query);
-          return { ...item, analysis };
+          const analysis = await analyzeContent(
+            item.title + ' ' + item.content,
+            query
+          );
+          return {
+            id: `search-${item.source}-${Buffer.from(item.url).toString('base64url').slice(0, 12)}`,
+            title: item.title,
+            content: item.content,
+            url: item.url,
+            source: item.source,
+            sourceId: item.sourceId ?? null,
+            isReal: analysis.isReal,
+            relevance: analysis.relevance,
+            relevanceReason: analysis.relevanceReason,
+            keywordMentioned: analysis.keywordMentioned,
+            importance: analysis.importance,
+            summary: analysis.summary,
+            viewCount: item.viewCount ?? null,
+            likeCount: item.likeCount ?? null,
+            retweetCount: item.retweetCount ?? null,
+            replyCount: item.replyCount ?? null,
+            commentCount: item.commentCount ?? null,
+            quoteCount: item.quoteCount ?? null,
+            danmakuCount: item.danmakuCount ?? null,
+            authorName: item.author?.name ?? null,
+            authorUsername: item.author?.username ?? null,
+            authorAvatar: item.author?.avatar ?? null,
+            authorFollowers: item.author?.followers ?? null,
+            authorVerified: item.author?.verified ?? null,
+            publishedAt: item.publishedAt?.toISOString() ?? null,
+            createdAt: new Date().toISOString(),
+            keyword: null,
+            analysis
+          };
         } catch {
-          return { ...item, analysis: null };
+          return null;
         }
       })
     );
 
-    res.json({ results: analyzedResults });
+    res.json({
+      results: analyzedResults.filter(Boolean),
+      sourceStats
+    });
   } catch (error) {
     console.error('Error searching hotspots:', error);
     res.status(500).json({ error: 'Failed to search hotspots' });
