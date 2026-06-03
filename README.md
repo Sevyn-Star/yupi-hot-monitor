@@ -1,10 +1,10 @@
 # AI 热点监控工具
 
-> 作者：[程序员鱼皮](https://yuyuanweb.feishu.cn/wiki/Abldw5WkjidySxkKxU2cQdAtnah)
+> **个人作品**：在 [程序员鱼皮](https://yuyuanweb.feishu.cn/wiki/Abldw5WkjidySxkKxU2cQdAtnah) 原版教学项目基础上二次开发与功能完善。
 >
-> 本项目为教学项目，提供完整视频教程 + 文字教程 + 简历写法 + 面试题解 + 答疑服务，帮你提升项目能力，给简历增加亮点！
+> 原项目为 AI 编程实战教程，本仓库为本人学习后的独立实现与扩展版本。
 >
-> ⭐️ 加入项目系列学习：[加入编程导航](https://www.codefather.cn/vip)
+> 原教程与系列学习：[编程导航](https://www.codefather.cn/vip) · 介绍视频：[B 站](https://bilibili.com/video/BV1g8d8B6ENk)
 
 
 
